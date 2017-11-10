@@ -14,6 +14,10 @@ buildscript {
 
 apply plugin: 'java'
 apply plugin: 'kotlin'
+apply plugin: 'antlr'
+apply plugin: 'application'
+
+mainClassName = "ru.spbau.mit.MainKt"
 
 sourceCompatibility = 1.8
 
@@ -22,9 +26,17 @@ repositories {
 }
 
 dependencies {
+    antlr "org.antlr:antlr4:4.7"
+    compile "org.antlr:antlr4-runtime:4.7"
     compile "org.jetbrains.kotlin:kotlin-stdlib-jre8:$kotlin_version"
     testCompile group: 'junit', name: 'junit', version: '4.12'
     testCompile "org.jetbrains.kotlin:kotlin-test-junit:$kotlin_version"
+}
+
+generateGrammarSource {
+    maxHeapSize = "64m"
+    arguments += ['-package', 'ru.spbau.mit.parser']
+    outputDirectory = new File("$buildDir/generated-src/antlr/main/ru/spbau/mit/parser")
 }
 
 compileKotlin {
@@ -33,3 +45,6 @@ compileKotlin {
 compileTestKotlin {
     kotlinOptions.jvmTarget = "1.8"
 }
+
+compileJava.dependsOn generateGrammarSource
+compileKotlin.dependsOn generateGrammarSource
