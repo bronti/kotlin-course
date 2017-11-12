@@ -35,7 +35,7 @@ dependencies {
 
 generateGrammarSource {
     maxHeapSize = "64m"
-    arguments += ['-package', 'ru.spbau.mit.parser']
+    arguments += ['-package', 'ru.spbau.mit.parser', '-visitor']
     outputDirectory = new File("$buildDir/generated-src/antlr/main/ru/spbau/mit/parser")
 }
 

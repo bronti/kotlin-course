@@ -4,7 +4,7 @@ lexer grammar SimpleLexer;
 COMMENTS : '//' ~[\r\n]+ -> skip ;
 
 // Whitespace
-NEWLINE            : '\r\n' | 'r' | '\n' ;
+NEWLINE            : ('\r\n' | 'r' | '\n') -> skip ;
 WS                 : [\t ]+ -> skip ;
 
 // Keywords
