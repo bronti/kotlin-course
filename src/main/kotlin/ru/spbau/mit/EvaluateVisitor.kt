@@ -3,9 +3,11 @@ package ru.spbau.mit
 import org.antlr.v4.runtime.tree.RuleNode
 import ru.spbau.mit.parser.SimpleParser
 import ru.spbau.mit.parser.SimpleParserBaseVisitor
+import java.io.OutputStream
 import java.io.OutputStreamWriter
+import java.io.Writer
 
-class EvaluateVisitor(out: OutputStreamWriter) : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
+class EvaluateVisitor(out: Writer) : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
 
     private var context: Context = Context(out)
 
@@ -28,15 +30,17 @@ class EvaluateVisitor(out: OutputStreamWriter) : SimpleParserBaseVisitor<Evaluat
     }
 
     override fun visitBlock(ctx: SimpleParser.BlockContext): Result {
-        return ctx.children.fold(defaultResult()) { prevResult, child ->
+        return ctx.children?.fold(defaultResult()) { prevResult, child ->
             if (prevResult is Result.Returned) return prevResult
             child.accept(this)
-        }
+        } ?: Result.None
     }
 
     override fun visitBlockWithBraces(ctx: SimpleParser.BlockWithBracesContext): Result {
         context.goDeeper()
-        return ctx.block().accept(this)
+        val result = ctx.block()?.accept(this) ?: Result.None
+        context.closeCurrentScope()
+        return result
     }
 
     override fun visitVariableDeclaration(ctx: SimpleParser.VariableDeclarationContext): Result {
@@ -145,9 +149,9 @@ class EvaluateVisitor(out: OutputStreamWriter) : SimpleParserBaseVisitor<Evaluat
             context.scope.defineVariable(argName)
             context.scope.setVariable(argName, value)
         }
-        val result = body.accept(this)
+        val result = body.accept(this) as? Result.Returned ?: Result.Returned(0)
         context.closeCurrentScope()
-        return result
+        return Result.ExpressionInt(result.value)
     }
 
     override fun visitFunctionCallExpression(ctx: SimpleParser.FunctionCallExpressionContext): Result {

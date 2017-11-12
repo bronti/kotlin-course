@@ -1,10 +1,10 @@
 package ru.spbau.mit
 
 import ru.spbau.mit.parser.SimpleParser
-import java.io.OutputStreamWriter
+import java.io.Writer
 
 
-class Context(val out: OutputStreamWriter) {
+class Context(private val out: Writer) {
     var scope: Scope = Scope.empty
         private set
 
