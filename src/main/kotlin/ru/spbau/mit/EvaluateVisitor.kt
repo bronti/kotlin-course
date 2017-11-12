@@ -1,8 +1,6 @@
 package ru.spbau.mit
 
-import com.sun.org.apache.regexp.internal.RE
 import org.antlr.v4.runtime.tree.RuleNode
-import org.antlr.v4.runtime.tree.TerminalNode
 import ru.spbau.mit.parser.SimpleParser
 import ru.spbau.mit.parser.SimpleParserBaseVisitor
 
@@ -14,20 +12,24 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
         object None: Result()
         data class Error(val lineNumber: Int, val msg: String): Result()
         data class Evaled<out T>(val value: T): Result()
-        data class Returned<out T>(val value: T): Result()
+        data class Returned(val value: Int): Result()
 
-        val isLast get() = this is Error || this is Returned<*>
+        val isLast get() = this is Error || this is Returned
     }
 
     override fun defaultResult(): Result = Result.None
 
     override fun shouldVisitNextChild(node: RuleNode, currentResult: Result) = !currentResult.isLast
 
-    override fun visitFile(ctx: SimpleParser.FileContext) = ctx.block().accept(this)!!
+    override fun visitFile(ctx: SimpleParser.FileContext): Result {
+        val result = ctx.block().accept(this)
+        return if (result.isLast) result
+        else Result.Returned(0)
+    }
 
     override fun visitBlock(ctx: SimpleParser.BlockContext): Result {
         return ctx.children.fold(defaultResult()) { prevResult, child ->
-            if (!shouldVisitNextChild(ctx, prevResult)) return prevResult
+            if (prevResult.isLast) return prevResult
             child.accept(this)
         }
     }
@@ -44,21 +46,17 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
         return handleExpression(
                 exprResult,
                 { context.scope.setVariable(name, it); Result.None },
-                { context.scope.setVariable(name, it); Result.None }
+                { Result.Error(ctx.VAR().symbol.line, "Only Integer variables are allowed.") }
         )
     }
 
     override fun visitReturnStatement(ctx: SimpleParser.ReturnStatementContext)
-            = handleExpression(ctx.expression(), { Result.Returned(it) }, { Result.Returned(it) })
+            = handleExpression(ctx.expression(), { Result.Returned(it) }, { Result.Error(ctx.RETURN().symbol.line, "Only Integer can be returned.") })
 
     override fun visitVariableExpression(ctx: SimpleParser.VariableExpressionContext): Result {
         val name = ctx.ID().symbol.text
-        val varType = context.scope.getVariableType(name)
-        return when (varType) {
-            Scope.VariableType.NONE -> Result.Error(ctx.ID().symbol.line, "Undefined or unset variable $name.")
-            Scope.VariableType.BOOL -> Result.Evaled(context.scope.getBoolVariable(name)!!)
-            Scope.VariableType.INT -> Result.Evaled(context.scope.getIntVariable(name)!!)
-        }
+        return context.scope.getVariable(name)?.let { Result.Evaled(it) }
+                ?: Result.Error(ctx.ID().symbol.line, "Undefined or unset variable $name.")
     }
 
     override fun visitMultiplicationExpression(ctx: SimpleParser.MultiplicationExpressionContext): Result {
@@ -89,11 +87,103 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
         }
     }
 
+    override fun visitWhileStatement(ctx: SimpleParser.WhileStatementContext): Result {
+        while (true) {
+            val cond = handleCondition(ctx.expression(), ctx.WHILE().symbol.line)
+            if (cond is Result.Error) return cond
+            if (cond !is Result.Evaled<*> || cond.value !is Boolean) throw IllegalStateException()
+            if (!cond.value) break
+
+            val body = ctx.blockWithBraces().accept(this)
+            if (body.isLast) return body
+        }
+        return Result.None
+    }
+
+    override fun visitIfStatement(ctx: SimpleParser.IfStatementContext): Result {
+        val cond = handleCondition(ctx.expression(), ctx.IF().symbol.line)
+        if (cond is Result.Error) return cond
+        if (cond !is Result.Evaled<*> || cond.value !is Boolean) throw IllegalStateException()
+        if (cond.value) {
+            val body = ctx.blockWithBraces(0).accept(this)
+            if (body.isLast) return body
+        } else if (ctx.ELSE() != null) {
+            val elseBody = ctx.blockWithBraces(1).accept(this)
+            if (elseBody.isLast) return elseBody
+        }
+        return Result.None
+    }
+
+    override fun visitAssignment(ctx: SimpleParser.AssignmentContext): Result {
+        val name = ctx.ID().symbol.text
+        if (!context.scope.isDefinedVariable(name)) {
+            return Result.Error(ctx.ID().symbol.line, "There is no variable with name $name.")
+        }
+        val exprResult = ctx.expression()
+        return handleExpression(
+                exprResult,
+                { context.scope.setVariable(name, it); Result.None },
+                { Result.Error(ctx.ID().symbol.line, "Cannot assign Bool value to variable.") }
+        )
+    }
+
+//    override fun visitFunction(ctx: SimpleParser.FunctionContext?): Result {
+//        return super.visitFunction(ctx)
+//    }
+//
+//    override fun visitParameterNames(ctx: SimpleParser.ParameterNamesContext?): Result {
+//        return super.visitParameterNames(ctx)
+//    }
+//
+//    override fun visitFunctionCall(ctx: SimpleParser.FunctionCallContext?): Result {
+//        return super.visitFunctionCall(ctx)
+//    }
+//
+//    override fun visitArguments(ctx: SimpleParser.ArgumentsContext?): Result {
+//        return super.visitArguments(ctx)
+//    }
+//
+//    override fun visitFunctionCallExpression(ctx: SimpleParser.FunctionCallExpressionContext?): Result {
+//        return super.visitFunctionCallExpression(ctx)
+//    }
+
+    override fun visitCompareExpression(ctx: SimpleParser.CompareExpressionContext): Result {
+        val (left, right) = ctx.expression().map { it.accept(this).let { res ->
+            if (res is Result.Error) { return res }
+            else (res as Result.Evaled<*>).value as Int
+        }}
+        return Result.Evaled(when {
+            ctx.EQ() != null -> left == right
+            ctx.NEQ() != null -> left != right
+            ctx.GEQ() != null -> left >= right
+            ctx.GR() != null -> left > right
+            ctx.LEQ() != null -> left <= right
+            ctx.LS() != null -> left < right
+            else -> throw IllegalStateException()
+        })
+    }
+
+    override fun visitParenthesesExpression(ctx: SimpleParser.ParenthesesExpressionContext): Result {
+        return ctx.expression().accept(this)
+    }
+
+    override fun visitLogicExpression(ctx: SimpleParser.LogicExpressionContext): Result {
+        val (left, right) = ctx.expression().map { it.accept(this).let { res ->
+            if (res is Result.Error) { return res }
+            else (res as Result.Evaled<*>).value as Boolean
+        }}
+        return Result.Evaled(when {
+            ctx.OR() != null -> left || right
+            ctx.AND() != null -> left && right
+            else -> throw IllegalStateException()
+        })
+    }
+
     private fun visitBinaryIntOp(exprs: List<SimpleParser.ExpressionContext>, op: (Int, Int) -> Result): Result {
         val (left, right) = exprs.map { it.accept(this).let { res ->
-                    if (res is Result.Error) { return res }
-                    else (res as Result.Evaled<*>).value as Int
-                }
+            if (res is Result.Error) { return res }
+            else (res as Result.Evaled<*>).value as Int
+        }
         }
         return op(left, right)
     }
@@ -113,4 +203,9 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
         }
     }
 
+    private fun handleCondition(expr: SimpleParser.ExpressionContext, line: Int): Result {
+        return handleExpression(expr,
+                { Result.Error(line, "Integer in condition.") },
+                { Result.Evaled(it) })
+    }
 }

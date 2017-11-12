@@ -21,62 +21,38 @@ sealed class Scope {
     }
 
     private val notSetVariables = HashSet<String>()
-    private val allVariables = HashSet<String>()
-    private val intVariables = HashMap<String, Int>()
-    private val boolVariables = HashMap<String, Boolean>()
+    private val variableValues = HashMap<String, Int>()
 
     fun defineVariable(name: String): Boolean {
         if (name in notSetVariables) return false
         notSetVariables.add(name)
-        allVariables.add(name)
         return true
     }
 
-    open fun <T> setVariable(name: String, value: T): Boolean {
-        if (name !in allVariables) return false
-        intVariables.remove(name)
-        boolVariables.remove(name)
-        when (value) {
-            is Int -> intVariables[name] = value
-            is Boolean -> boolVariables[name] = value
-            else -> throw IllegalStateException()
-        }
+    open fun setVariable(name: String, value: Int): Boolean {
+        if (!isDefinedVariable(name)) return false
+        variableValues[name] = value
         notSetVariables.remove(name)
         return true
     }
 
-    open fun getIntVariable(name: String): Int? {
-        if (name !in intVariables) return null
-        return intVariables[name]
+    open fun getVariable(name: String): Int? {
+        if (name !in variableValues) return null
+        return variableValues[name]
     }
 
-    open fun getBoolVariable(name: String): Boolean? {
-        if (name !in boolVariables) return null
-        return boolVariables[name]
-    }
-
-    open fun getVariableType(name: String) = when (name) {
-        in boolVariables -> VariableType.BOOL
-        in intVariables -> VariableType.INT
-        else -> VariableType.NONE
-    }
+    open fun isDefinedVariable(name: String) = name in notSetVariables || name in variableValues
 
     class Base : Scope()
     data class Inner(val outer: Scope) : Scope() {
-        override fun <T> setVariable(name: String, value: T)
+        override fun setVariable(name: String, value: Int)
                 = super.setVariable(name, value) || outer.setVariable(name, value)
 
-        override fun getIntVariable(name: String): Int?
-                = super.getIntVariable(name) ?: outer.getIntVariable(name)
+        override fun getVariable(name: String): Int?
+                = super.getVariable(name) ?: outer.getVariable(name)
 
-        override fun getBoolVariable(name: String): Boolean?
-                = super.getBoolVariable(name) ?: outer.getBoolVariable(name)
-
-        override fun getVariableType(name: String): VariableType {
-            val res = super.getVariableType(name)
-            if (res != VariableType.NONE) return res
-            return outer.getVariableType(name)
-        }
+        override fun isDefinedVariable(name: String)
+                = super.isDefinedVariable(name) || outer.isDefinedVariable(name)
     }
 
     companion object {
