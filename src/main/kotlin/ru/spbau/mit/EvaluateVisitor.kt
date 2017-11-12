@@ -3,14 +3,17 @@ package ru.spbau.mit
 import org.antlr.v4.runtime.tree.RuleNode
 import ru.spbau.mit.parser.SimpleParser
 import ru.spbau.mit.parser.SimpleParserBaseVisitor
+import java.io.OutputStream
+import java.io.OutputStreamWriter
 
-class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
+class EvaluateVisitor(val out: OutputStreamWriter) : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
 
     private var context: Context = Context()
 
+    class EvaluationException(val lineNumber: Int, msg: String): Exception(msg)
+
     sealed class Result {
         object None: Result()
-        data class Error(val lineNumber: Int, val msg: String): Result()
         data class Evaled<out T>(val value: T): Result()
         data class Returned(val value: Int): Result()
 
@@ -41,22 +44,22 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
 
     override fun visitVariableDeclaration(ctx: SimpleParser.VariableDeclarationContext): Result {
         val name = ctx.ID().symbol.text
-        if (!context.scope.defineVariable(name)) return Result.Error(ctx.VAR().symbol.line, "Redefinition of variable $name.")
+        if (!context.scope.defineVariable(name)) throw EvaluationException(ctx.VAR().symbol.line, "Redefinition of variable $name.")
         val exprResult = ctx.expression() ?: return Result.None
         return handleExpression(
                 exprResult,
                 { context.scope.setVariable(name, it); Result.None },
-                { Result.Error(ctx.VAR().symbol.line, "Only Integer variables are allowed.") }
+                { throw EvaluationException(ctx.VAR().symbol.line, "Only Integer variables are allowed.") }
         )
     }
 
     override fun visitReturnStatement(ctx: SimpleParser.ReturnStatementContext)
-            = handleExpression(ctx.expression(), { Result.Returned(it) }, { Result.Error(ctx.RETURN().symbol.line, "Only Integer can be returned.") })
+            = handleExpression(ctx.expression(), { Result.Returned(it) }, { throw EvaluationException(ctx.RETURN().symbol.line, "Only Integer can be returned.") })
 
     override fun visitVariableExpression(ctx: SimpleParser.VariableExpressionContext): Result {
         val name = ctx.ID().symbol.text
         return context.scope.getVariable(name)?.let { Result.Evaled(it) }
-                ?: Result.Error(ctx.ID().symbol.line, "Undefined or unset variable $name.")
+                ?: throw EvaluationException(ctx.ID().symbol.line, "Undefined or unset variable $name.")
     }
 
     override fun visitMultiplicationExpression(ctx: SimpleParser.MultiplicationExpressionContext): Result {
@@ -73,7 +76,7 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
 
     override fun visitLiteralExpression(ctx: SimpleParser.LiteralExpressionContext): Result {
         return ctx.LITERAL().symbol.text.toIntOrNull()?.let { Result.Evaled(it) }
-                ?: Result.Error(ctx.LITERAL().symbol.line, "Cannot read literal ${ctx.LITERAL().symbol.text}")
+                ?: throw EvaluationException(ctx.LITERAL().symbol.line, "Cannot read literal ${ctx.LITERAL().symbol.text}")
     }
 
     override fun visitSummExpression(ctx: SimpleParser.SummExpressionContext): Result {
@@ -90,7 +93,6 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
     override fun visitWhileStatement(ctx: SimpleParser.WhileStatementContext): Result {
         while (true) {
             val cond = handleCondition(ctx.expression(), ctx.WHILE().symbol.line)
-            if (cond is Result.Error) return cond
             if (cond !is Result.Evaled<*> || cond.value !is Boolean) throw IllegalStateException()
             if (!cond.value) break
 
@@ -102,7 +104,6 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
 
     override fun visitIfStatement(ctx: SimpleParser.IfStatementContext): Result {
         val cond = handleCondition(ctx.expression(), ctx.IF().symbol.line)
-        if (cond is Result.Error) return cond
         if (cond !is Result.Evaled<*> || cond.value !is Boolean) throw IllegalStateException()
         if (cond.value) {
             val body = ctx.blockWithBraces(0).accept(this)
@@ -117,13 +118,13 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
     override fun visitAssignment(ctx: SimpleParser.AssignmentContext): Result {
         val name = ctx.ID().symbol.text
         if (!context.scope.isDefinedVariable(name)) {
-            return Result.Error(ctx.ID().symbol.line, "There is no variable with name $name.")
+            throw EvaluationException(ctx.ID().symbol.line, "There is no variable with name $name.")
         }
         val exprResult = ctx.expression()
         return handleExpression(
                 exprResult,
                 { context.scope.setVariable(name, it); Result.None },
-                { Result.Error(ctx.ID().symbol.line, "Cannot assign Bool value to variable.") }
+                { throw EvaluationException(ctx.ID().symbol.line, "Cannot assign Bool value to variable.") }
         )
     }
 
@@ -131,10 +132,11 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
         val name = ctx.ID().symbol.text
         val parameters = ctx.parameterNames().ID().map { it.symbol.text }
         if (parameters.distinct().size != parameters.size)
-            return Result.Error(ctx.ID().symbol.line, "Same param names in function is not allowed.")
+            throw EvaluationException(ctx.ID().symbol.line, "Same param names in function is not allowed.")
         val body = ctx.blockWithBraces()
-        return if (context.scope.defineFunction(name, parameters, body)) Result.None
-        else Result.Error(ctx.ID().symbol.line, "Redefenition of the function $name.")
+        if (!context.scope.defineFunction(name, parameters, body))
+            throw EvaluationException(ctx.ID().symbol.line, "Redefenition of the function $name.")
+        return Result.None
     }
 
     override fun visitFunctionCall(ctx: SimpleParser.FunctionCallContext): Result {
@@ -143,17 +145,18 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
             val result = it.accept(this)
             if (result is Error) return result
             if (result is Result.Evaled<*> && result.value is Boolean) {
-                return Result.Error(it.start.line, "Cannot pass Boolen as function argument.")
+                throw EvaluationException(it.start.line, "Cannot pass Boolen as function argument.")
             }
             if (result !is Result.Evaled<*>) throw IllegalStateException()
             result.value as Int
         }
 
         val (argNames, body) = context.scope.getFunction(name) ?:
-                return if (context.scope.callPredefinedFunction(name, arguments)) Result.None
-                else Result.Error(ctx.start.line, "There is no such function")
+                if (context.scope.callPredefinedFunction(name, arguments)) return Result.None
+                else throw EvaluationException(ctx.start.line, "There is no such function")
 
-        if (argNames.size != arguments.size) return Result.Error(ctx.start.line, "Invalid number of arguments.")
+        if (argNames.size != arguments.size)
+            throw EvaluationException(ctx.start.line, "Invalid number of arguments.")
 
         context.goDeeper()
         for ((argName, value) in argNames.zip(arguments)) {
@@ -170,9 +173,8 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
     }
 
     override fun visitCompareExpression(ctx: SimpleParser.CompareExpressionContext): Result {
-        val (left, right) = ctx.expression().map { it.accept(this).let { res ->
-            if (res is Result.Error) { return res }
-            else (res as Result.Evaled<*>).value as Int
+        val (left, right) = ctx.expression().map { it.accept(this).let {
+            (it as Result.Evaled<*>).value as Int
         }}
         return Result.Evaled(when {
             ctx.EQ() != null -> left == right
@@ -190,9 +192,8 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
     }
 
     override fun visitLogicExpression(ctx: SimpleParser.LogicExpressionContext): Result {
-        val (left, right) = ctx.expression().map { it.accept(this).let { res ->
-            if (res is Result.Error) { return res }
-            else (res as Result.Evaled<*>).value as Boolean
+        val (left, right) = ctx.expression().map { it.accept(this).let {
+            (it as Result.Evaled<*>).value as Boolean
         }}
         return Result.Evaled(when {
             ctx.OR() != null -> left || right
@@ -202,18 +203,15 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
     }
 
     private fun visitBinaryIntOp(exprs: List<SimpleParser.ExpressionContext>, op: (Int, Int) -> Result): Result {
-        val (left, right) = exprs.map { it.accept(this).let { res ->
-            if (res is Result.Error) { return res }
-            else (res as Result.Evaled<*>).value as Int
-        }
-        }
+        val (left, right) = exprs.map { it.accept(this).let {
+            (it as Result.Evaled<*>).value as Int
+        }}
         return op(left, right)
     }
 
     private fun handleExpression(expr: SimpleParser.ExpressionContext, handleInt: (Int) -> Result, handleBool: (Boolean) -> Result): Result {
         val result = expr.accept(this)
         return when (result) {
-            is Result.Error -> return result
             is Result.Evaled<*> -> {
                 when (result.value) {
                     is Int -> handleInt(result.value)
@@ -227,7 +225,7 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
 
     private fun handleCondition(expr: SimpleParser.ExpressionContext, line: Int): Result {
         return handleExpression(expr,
-                { Result.Error(line, "Integer in condition.") },
+                { throw EvaluationException(line, "Integer in condition.") },
                 { Result.Evaled(it) })
     }
 }

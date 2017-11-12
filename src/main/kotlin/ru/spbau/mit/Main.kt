@@ -2,25 +2,33 @@ package ru.spbau.mit
 
 import org.antlr.v4.runtime.BufferedTokenStream
 import org.antlr.v4.runtime.CharStreams
+import org.antlr.v4.runtime.misc.ParseCancellationException
 import ru.spbau.mit.parser.SimpleLexer
 import ru.spbau.mit.parser.SimpleParser
+import java.io.IOException
+import java.io.OutputStreamWriter
 
 fun main(args: Array<String>) {
-    val tokenStream = BufferedTokenStream(SimpleLexer(CharStreams.fromString(
-            """
-                var x = 0
-                while (x < 3) {
-                    x = x + 1
-                    if (x == 2) {
-                        return 10
-                    }
-                }
-                return 5
-            """.trimIndent()
-    )))
-    val parser = SimpleParser(tokenStream)
-    val tree = parser.file()
-    println("Result: ${EvaluateVisitor().visit(tree)}")
+    if (args.isEmpty() || args.size > 1) {
+        System.err.println("Path to file is required.")
+        return
+    }
 
-//    println(tree)
+    try {
+        val lexer = SimpleLexer(CharStreams.fromFileName(args.first()))
+        val parser = SimpleParser(BufferedTokenStream(lexer))
+        val tree = parser.file()
+        val evaluator = EvaluateVisitor(OutputStreamWriter(System.out))
+        val result = evaluator.visit(tree)
+        when (result) {
+            is EvaluateVisitor.Result.Returned -> println("Program finished with code: ${result.value}")
+            else -> throw IllegalStateException()
+        }
+    } catch (e: EvaluateVisitor.EvaluationException) {
+        System.err.println("Evaluation error on line ${e.lineNumber}: ${e.message}.")
+    } catch (e: IOException) {
+        System.err.println("IO exception: ${e.message}")
+    } catch (e: ParseCancellationException) {
+        System.err.println("Parsing exception: ${e.message}")
+    }
 }
