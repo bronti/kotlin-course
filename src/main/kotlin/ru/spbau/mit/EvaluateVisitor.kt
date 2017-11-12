@@ -127,25 +127,47 @@ class EvaluateVisitor : SimpleParserBaseVisitor<EvaluateVisitor.Result>() {
         )
     }
 
-//    override fun visitFunction(ctx: SimpleParser.FunctionContext?): Result {
-//        return super.visitFunction(ctx)
-//    }
-//
-//    override fun visitParameterNames(ctx: SimpleParser.ParameterNamesContext?): Result {
-//        return super.visitParameterNames(ctx)
-//    }
-//
-//    override fun visitFunctionCall(ctx: SimpleParser.FunctionCallContext?): Result {
-//        return super.visitFunctionCall(ctx)
-//    }
-//
-//    override fun visitArguments(ctx: SimpleParser.ArgumentsContext?): Result {
-//        return super.visitArguments(ctx)
-//    }
-//
-//    override fun visitFunctionCallExpression(ctx: SimpleParser.FunctionCallExpressionContext?): Result {
-//        return super.visitFunctionCallExpression(ctx)
-//    }
+    override fun visitFunctionDeclaration(ctx: SimpleParser.FunctionDeclarationContext): Result {
+        val name = ctx.ID().symbol.text
+        val parameters = ctx.parameterNames().ID().map { it.symbol.text }
+        if (parameters.distinct().size != parameters.size)
+            return Result.Error(ctx.ID().symbol.line, "Same param names in function is not allowed.")
+        val body = ctx.blockWithBraces()
+        return if (context.scope.defineFunction(name, parameters, body)) Result.None
+        else Result.Error(ctx.ID().symbol.line, "Redefenition of the function $name.")
+    }
+
+    override fun visitFunctionCall(ctx: SimpleParser.FunctionCallContext): Result {
+        val name = ctx.ID().symbol.text
+        val arguments = ctx.arguments().expression().map {
+            val result = it.accept(this)
+            if (result is Error) return result
+            if (result is Result.Evaled<*> && result.value is Boolean) {
+                return Result.Error(it.start.line, "Cannot pass Boolen as function argument.")
+            }
+            if (result !is Result.Evaled<*>) throw IllegalStateException()
+            result.value as Int
+        }
+
+        val (argNames, body) = context.scope.getFunction(name) ?:
+                return if (context.scope.callPredefinedFunction(name, arguments)) Result.None
+                else Result.Error(ctx.start.line, "There is no such function")
+
+        if (argNames.size != arguments.size) return Result.Error(ctx.start.line, "Invalid number of arguments.")
+
+        context.goDeeper()
+        for ((argName, value) in argNames.zip(arguments)) {
+            context.scope.defineVariable(argName)
+            context.scope.setVariable(argName, value)
+        }
+        val result = body.accept(this)
+        context.closeCurrentScope()
+        return result
+    }
+
+    override fun visitFunctionCallExpression(ctx: SimpleParser.FunctionCallExpressionContext): Result {
+        return ctx.functionCall().accept(this)
+    }
 
     override fun visitCompareExpression(ctx: SimpleParser.CompareExpressionContext): Result {
         val (left, right) = ctx.expression().map { it.accept(this).let { res ->

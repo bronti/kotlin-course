@@ -8,11 +8,11 @@ block               : statement* ;
 
 blockWithBraces     : LBRACE block RBRACE ;
 
-statement           : function | variableDeclaration | expression | whileStatement | ifStatement | assignment | returnStatement ;
+statement           : functionDeclaration | variableDeclaration | expression | whileStatement | ifStatement | assignment | returnStatement ;
 
-function            : FUN ID LPAREN parameterNames RPAREN blockWithBraces ;
+functionDeclaration : FUN ID LPAREN parameterNames RPAREN blockWithBraces ;
 
-variableDeclaration            : VAR ID (ASSIGN expression)? ;
+variableDeclaration : VAR ID (ASSIGN expression)? ;
 
 parameterNames      : (ID (COMMA ID)*)? ;
 
