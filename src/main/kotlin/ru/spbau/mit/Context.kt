@@ -1,9 +1,10 @@
 package ru.spbau.mit
 
 import ru.spbau.mit.parser.SimpleParser
+import java.io.OutputStreamWriter
 
 
-class Context {
+class Context(val out: OutputStreamWriter) {
     var scope: Scope = Scope.empty
         private set
 
@@ -13,6 +14,17 @@ class Context {
 
     fun closeCurrentScope() {
         scope = (scope as Scope.Inner).outer
+    }
+
+    private val predefinedFunctions =
+            hashMapOf<String, (List<Int>) -> Unit>(
+                    "println" to { it -> out.write(it.joinToString(" ", postfix = "\n")) }
+            )
+
+    fun callPredefinedFunction(name: String, args: List<Int>): Boolean {
+        if (name !in predefinedFunctions) return false
+        predefinedFunctions[name]!!(args)
+        return true
     }
 }
 
@@ -41,12 +53,6 @@ sealed class Scope {
     private fun getVariableFromOuterScope(name: String): Int? {
         if (name !in variableValues) return null
         return variableValues[name]
-    }
-
-    fun callPredefinedFunction(name: String, args: List<Int>): Boolean {
-        if (name !in predefinedFunctions) return false
-        predefinedFunctions[name]!!(args)
-        return true
     }
 
     open fun getFunction(name: String): Pair<List<String>, SimpleParser.BlockWithBracesContext>? {
@@ -82,10 +88,5 @@ sealed class Scope {
 
     companion object {
         val empty get() = Base()
-
-        private val predefinedFunctions =
-                hashMapOf<String, (List<Int>) -> Unit>(
-                        "println" to { it -> println(it.joinToString(" ")) }
-                )
     }
 }
