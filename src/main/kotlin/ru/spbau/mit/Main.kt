@@ -9,13 +9,14 @@ import java.io.IOException
 import java.io.OutputStreamWriter
 
 fun main(args: Array<String>) {
-    if (args.isEmpty() || args.size > 1) {
-        System.err.println("Path to file is required.")
-        return
-    }
+//    if (args.isEmpty() || args.size > 1) {
+//        System.err.println("Path to file is required.")
+//        return
+//    }
 
     try {
-        val lexer = SimpleLexer(CharStreams.fromFileName(args.first()))
+//        val lexer = SimpleLexer(CharStreams.fromFileName(args.first()))
+        val lexer = SimpleLexer(CharStreams.fromString(readLine()))
         val parser = SimpleParser(BufferedTokenStream(lexer))
         val tree = parser.file()
         val evaluator = EvaluateVisitor(OutputStreamWriter(System.out))

@@ -43,41 +43,36 @@ sealed class Scope {
         return true
     }
 
-    private fun setVariableInOuterScope(name: String, value: Int): Boolean {
+    protected fun setVariableInInnermostScope(name: String, value: Int): Boolean {
         if (!definedInOuterScope(name)) return false
         variableValues[name] = value
         notSetVariables.remove(name)
         return true
     }
 
-    private fun getVariableFromOuterScope(name: String): Int? {
+    protected fun getVariableFromInnermostScope(name: String): Int? {
         if (name !in variableValues) return null
         return variableValues[name]
     }
 
-    open fun getFunction(name: String): Pair<List<String>, SimpleParser.BlockWithBracesContext>? {
-        return functions[name]
-    }
+    open fun getFunction(name: String) = functions[name]
 
-    open fun setVariable(name: String, value: Int): Boolean = setVariableInOuterScope(name, value)
-    open fun getVariable(name: String): Int? = getVariableFromOuterScope(name)
+    open fun setVariable(name: String, value: Int): Boolean = setVariableInInnermostScope(name, value)
+    open fun getVariable(name: String): Int? = getVariableFromInnermostScope(name)
 
     open fun isDefinedVariable(name: String) = name in notSetVariables || name in variableValues
 
-    fun defineFunction(name: String, params: List<String>, ctx: SimpleParser.BlockWithBracesContext): Boolean {
-        if (name in functions) return false
-        functions[name] = Pair(params, ctx)
-        return true
-    }
+    fun defineFunction(name: String, params: List<String>, ctx: SimpleParser.BlockWithBracesContext)
+            = functions.put(name, Pair(params, ctx)) == null
 
     class Base : Scope()
 
     data class Inner(val outer: Scope) : Scope() {
         override fun setVariable(name: String, value: Int)
-                = super.setVariable(name, value) || outer.setVariable(name, value)
+                = setVariableInInnermostScope(name, value) || outer.setVariable(name, value)
 
         override fun getVariable(name: String): Int?
-                = super.getVariable(name) ?: outer.getVariable(name)
+                = getVariableFromInnermostScope(name) ?: outer.getVariable(name)
 
         override fun isDefinedVariable(name: String)
                 = super.isDefinedVariable(name) || outer.isDefinedVariable(name)
